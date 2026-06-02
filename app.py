@@ -140,13 +140,27 @@ if uploaded_files:
                 
                 st.markdown("---")
                 
-                # ✨ [ส่วนที่เพิ่มเข้ามาใหม่] ระบบเลือกวันที่สำหรับปั๊มลงใน Excel
-                st.write("**📅 ป้อนข้อมูลวันที่สำหรับรายงาน Excel**")
-                selected_date = st.date_input("เลือกวันที่ปฏิบัติงาน", datetime.date.today())
-                date_string = selected_date.strftime("%Y-%m-%d") # แปลงเป็นข้อความ เช่น 2026-05-25
+                # ✨ [ฟังก์ชันใหม่] ระบบเลือกช่วงวันที่ปฏิบัติงาน (Date Range)
+                st.write("**📅 ป้อนช่วงข้อมูลวันที่สำหรับรายงาน Excel**")
+                
+                # ผู้ใช้สามารถคลิกและลากเลือกช่วงวันที่ได้ เช่น วันที่ 25 พ.ค. ถึง 1 มิ.ย.
+                date_range = st.date_input(
+                    "เลือกช่วงวันที่ปฏิบัติงาน",
+                    value=(datetime.date.today() - datetime.timedelta(days=7), datetime.date.today())
+                )
+                
+                # แปลงช่วงวันที่เลือกออกมาเป็นข้อความปั๊มหัวกระดาษและชื่อไฟล์
+                if isinstance(date_range, tuple) and len(date_range) == 2:
+                    start_date, end_date = date_range
+                    date_string = f"{start_date.strftime('%Y-%m-%d')} - {end_date.strftime('%Y-%m-%d')}"
+                elif isinstance(date_range, tuple) and len(date_range) == 1:
+                    start_date = date_range[0]
+                    date_string = f"{start_date.strftime('%Y-%m-%d')}"
+                else:
+                    date_string = datetime.date.today().strftime('%Y-%m-%d')
                 
                 # --------------------------------------------------
-                # 📥 ระบบส่งออกเป็นไฟล์ Excel (.xlsx) แบบมีวันที่ + มี Total
+                # 📥 ระบบส่งออกเป็นไฟล์ Excel (.xlsx) แบบมีช่วงวันที่ + มี Total
                 # --------------------------------------------------
                 st.write("**📥 ดาวน์โหลดรายงานสรุป**")
                 
@@ -173,9 +187,9 @@ if uploaded_files:
 
                 # สร้างปุ่มสำหรับกดดาวน์โหลดไฟล์ Excel ออกไปนอกระบบ
                 st.download_button(
-                    label="🟢 ดาวน์โหลดรายงานเป็นไฟล์ Excel (ระบุวันที่ + Total)",
+                    label="🟢 ดาวน์โหลดรายงานเป็นไฟล์ Excel (ระบุช่วงวันที่ + Total)",
                     data=buffer,
-                    file_name=f"สรุปยอดปรับรุ่นจริง_{date_string}.xlsx",
+                    file_name=f"สรุปยอดปรับรุ่นจริง_({date_string.replace(' ', '')}).xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width=True
                 )
@@ -272,4 +286,4 @@ if st.session_state.history_log:
             st.session_state.history_log = []
             st.rerun()
 else:
-    st.info("ℹ️ ยังไม่มีประวัติยอดรวมสะสม in คลัง")
+    st.info("ℹ️ ยังไม่มีประวัติยอดรวมสะสมในคลัง")
