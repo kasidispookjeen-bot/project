@@ -24,6 +24,8 @@ st.markdown("""
     }
     /* แยกกรอบพื้นที่อัปโหลดให้ดูสะอาด */
     .stFileUploader { background-color: #F8FAFC; border: 1px dashed #E2E8F0; padding: 12px; border-radius: 8px; }
+    /* สไตล์สำหรับตัวเลข Total สรุปผลยอด */
+    .total-box { background-color: #F1F5F9; border-left: 4px solid #10B981; padding: 12px 16px; border-radius: 6px; margin-top: 15px; margin-bottom: 15px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -103,6 +105,9 @@ if uploaded_files:
             )
             emp_total_df.columns = ["รหัสพนักงาน (EMP ID)", "จำนวนรวมแท้จริง (ตัว)"]
 
+            # คำนวณยอดรวมทั้งหมด (Total Sum) ในรอบปัจจุบัน
+            current_total_sum = emp_total_df["จำนวนรวมแท้จริง (ตัว)"].sum()
+
             # --------------------------------------------------
             # ✨ ส่วนการแสดงผลป๊อปอัปและข้อความสรุปรายคน
             # --------------------------------------------------
@@ -127,7 +132,11 @@ if uploaded_files:
                         f"👤 รหัสพนักงาน: **{row['รหัสพนักงาน (EMP ID)']}** ➡️ ยอดปรับจริงรวม **{row['จำนวนรวมแท้จริง (ตัว)']:,}** ตัว"
                     )
 
-                st.markdown("<br>", unsafe_allow_html=True)
+                # ✨ [ส่วนที่เพิ่มเข้ามาใหม่] แสดงกล่องผลรวม Total รวมของทุกคนในหน้านี้
+                st.markdown(
+                    f'<div class="total-box"><b>📊 ยอดรวมทั้งหมดประจำรอบนี้ (Total):</b> <span style="color:#10B981; font-size:18px; font-weight:700;">{current_total_sum:,}</span> ตัว</div>', 
+                    unsafe_allow_html=True
+                )
                 
                 # --------------------------------------------------
                 # 📥 ระบบส่งออกเป็นไฟล์ Excel (.xlsx)
