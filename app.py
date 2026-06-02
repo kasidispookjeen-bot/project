@@ -1,11 +1,23 @@
+import datetime
 import pandas as pd
 import streamlit as st
 
 # ตั้งค่าหน้าเว็บ
-st.set_page_config(page_title="ระบบอ่านไฟล์นับสต็อก", page_icon="📦", layout="centered")
+st.set_page_config(
+    page_title="ระบบอ่านไฟล์นับสต็อกและบันทึกประวัติ", page_icon="📦", layout="centered"
+)
 
-st.title("📦 ระบบตรวจสอบข้อมูลการนับสต็อกสินค้า")
-st.write("อัปโหลดไฟล์ Excel เพื่อดูสรุปรายการนับสต็อกของพนักงาน")
+st.title("📦 ระบบตรวจสอบและบันทึกประวัติยอดรวมสต็อก")
+st.write(
+    "อัปโหลดไฟล์ Excel เพื่อดูสรุป และระบบจะทำการบันทึกประวัติยอดรวมเก็บไว้ให้คุณโดยอัตโนมัติ"
+)
+
+# --------------------------------------------------
+# ระบบฐานข้อมูลจำลอง (ประวัติยอดรวมสะสม)
+# --------------------------------------------------
+# สร้างตัวแปรเก็บประวัติในระบบ (จะอยู่ตลอดตราบใดที่ยังไม่ปิดหน้าเว็บหรือรีเฟรช)
+if "history_log" not in st.session_state:
+    st.session_state.history_log = []
 
 # ส่วนอัปโหลดไฟล์
 uploaded_file = st.file_uploader(
@@ -14,22 +26,18 @@ uploaded_file = st.file_uploader(
 
 if uploaded_file is not None:
     try:
-        # อ่านไฟล์ Excel เพื่อดูชีตทั้งหมด
         xls = pd.ExcelFile(uploaded_file)
         all_data = []
 
-        # ดึงข้อมูลจากทุกชีตที่มีโครงสร้างถูกต้อง
+        # ดึงข้อมูลจากทุกชีต
         for sheet_name in xls.sheet_names:
             df = pd.read_excel(uploaded_file, sheet_name=sheet_name)
 
-            # ตรวจสอบคอลัมน์ที่จำเป็น
             required_cols = ["EMP ID", "STATION", "SN"]
             if all(col in df.columns for col in required_cols):
-                # คลีนข้อมูลแถวว่างและหัวตารางซ้ำซ้อน
                 df_clean = df[df["EMP ID"].notna()]
                 df_clean = df_clean[df_clean["EMP ID"] != "EMP ID"]
 
-                # เอาช่องว่าง (space) ออกจากข้อความ
                 df_clean["EMP ID"] = df_clean["EMP ID"].astype(str).str.strip()
                 df_clean["STATION"] = (
                     df_clean["STATION"].astype(str).str.strip()
@@ -38,11 +46,9 @@ if uploaded_file is not None:
                 all_data.append(df_clean[["EMP ID", "STATION", "SN"]])
 
         if all_data:
-            # รวมข้อมูลจากทุกชีตเข้าด้วยกัน
             combined_df = pd.concat(all_data, ignore_index=True)
 
-            # 1. หน้าสรุปภาพรวม (Summary)
-            st.subheader("📊 สรุปจำนวนการนับสต็อกแยกตามพนักงาน")
+            # คำนวณสรุปของไฟล์ปัจจุบัน
             summary_df = (
                 combined_df.groupby(["EMP ID", "STATION"])["SN"]
                 .count()
@@ -54,40 +60,89 @@ if uploaded_file is not None:
                 "จำนวนที่นับได้ (ตัว)",
             ]
 
-            # แสดงตารางสรุปบนเว็บ
+            # --------------------------------------------------
+            # ส่วนของปุ่ม "บันทึกเข้าประวัติยอดรวม"
+            # --------------------------------------------------
+            st.success("✅ อ่านไฟล์สำเร็จ!")
+
+            # แสดงตารางผลลัพธ์ของไฟล์ที่เพิ่งอัปโหลด
+            st.subheader("📊 ผลการนับสต็อกจากไฟล์ปัจจุบัน")
             st.dataframe(summary_df, use_container_width=True, hide_index=True)
 
-            # 2. ตัวกรองข้อมูลเพื่อค้นหาแบบละเอียด
-            st.markdown("---")
-            st.subheader("🔍 ค้นหารายละเอียดรายบุคคล")
+            # คำนวณยอดรวมของไฟล์นี้ เพื่อเตรียมบันทึก
+            total_items = len(combined_df)
+            unique_staff = combined_df["EMP ID"].nunique()
 
-            unique_emp = combined_df["EMP ID"].unique()
-            selected_emp = st.selectbox("เลือกรหัสพนักงานที่ต้องการตรวจสอบ", unique_emp)
+            st.write(
+                f"💡 ไฟล์นี้มีพนักงานทำงานทั้งหมด **{unique_staff} คน** รวมยอดนับสินค้าได้ **{total_items} ตัว**"
+            )
 
-            if selected_emp:
-                # กรองข้อมูลเฉพาะของพนักงานคนนั้น
-                emp_details = combined_df[combined_df["EMP ID"] == selected_emp]
-                st.write(
-                    f"**รายการสินค้าทั้งหมดที่รหัสพนักงาน `{selected_emp}` เป็นคนนับ (รวม {len(emp_details)} ตัว):**"
+            # สร้างปุ่มกดบันทึกข้อมูลเข้าประวัติรวม
+            if st.button("📥 บันทึกข้อมูลไฟล์นี้ลงประวัติยอดรวมสะสม"):
+                # ตรวจสอบเพื่อไม่ให้บันทึกไฟล์ซ้ำซ้อนกัน
+                file_name = uploaded_file.name
+                current_time = datetime.datetime.now().strftime(
+                    "%Y-%m-%d %H:%M:%S"
                 )
 
-                # แสดงตารางรายชื่อ Serial Number ทั้งหมด
-                emp_details_display = emp_details[["STATION", "SN"]].rename(
-                    columns={
-                        "STATION": "สินค้า/สถานี (STATION)",
-                        "SN": "หมายเลขโปรดัค (SN)",
-                    }
-                )
-                st.dataframe(
-                    emp_details_display,
-                    use_container_width=True,
-                    hide_index=True,
-                )
+                # ดึงข้อมูลรายคนไปบันทึกในประวัติ
+                for _, row in summary_df.iterrows():
+                    st.session_state.history_log.append(
+                        {
+                            "เวลาที่บันทึก": current_time,
+                            "ชื่อไฟล์": file_name,
+                            "รหัสพนักงาน (EMP ID)": row[
+                                "รหัสพนักงาน (EMP ID)"
+                            ],
+                            "สินค้า/สถานี (STATION)": row[
+                                "สินค้า/สถานี (STATION)"
+                            ],
+                            "จำนวนที่นับได้ (ตัว)": row[
+                                "จำนวนที่นับได้ (ตัว)"
+                            ],
+                        }
+                    )
+                st.toast(f"บันทึกประวัติของไฟล์ {file_name} เรียบร้อยแล้ว!")
 
         else:
             st.error(
-                "❌ ไม่พบคอลัมน์ 'EMP ID', 'STATION' หรือ 'SN' ในไฟล์นี้ กรุณาตรวจสอบโครงสร้างตาราง"
+                "❌ ไม่พบคอลัมน์ 'EMP ID', 'STATION' หรือ 'SN' ในไฟล์นี้"
             )
 
     except Exception as e:
         st.error(f"เกิดข้อผิดพลาดในการอ่านไฟล์: {e}")
+
+# --------------------------------------------------
+# ส่วนที่ 2: หน้าต่างประวัติยอดรวมสะสม (Historical Dashboard)
+# --------------------------------------------------
+st.markdown("---")
+st.subheader("📜 ประวัติยอดรวมสะสม (ข้อมูลทั้งหมดที่บันทึกไว้)")
+
+if st.session_state.history_log:
+    # แปลงข้อมูลประวัติในระบบออกมาเป็นตาราง DataFrame
+    history_df = pd.DataFrame(st.session_state.history_log)
+
+    # 1. แสดงกล่องสถิติตัวเลขยอดรวม (KPI Cards)
+    total_accumulated_count = history_df["จำนวนที่นับได้ (ตัว)"].sum()
+    total_files_uploaded = history_df["ชื่อไฟล์"].nunique()
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("จำนวนไฟล์ที่บันทึกไปแล้ว", f"{total_files_uploaded} ไฟล์")
+    with col2:
+        st.metric(
+            "ยอดนับสินค้าสะสมรวมทั้งหมด", f"{total_accumulated_count:,} ตัว"
+        )
+
+    # 2. ตารางแสดงประวัติรวมแบบละเอียด
+    st.write("**ตารางประวัติการบันทึกข้อมูลย้อนหลัง:**")
+    st.dataframe(history_df, use_container_width=True, hide_index=True)
+
+    # 3. ปุ่มสำหรับล้างประวัติ (Reset)
+    if st.button("🗑️ ล้างประวัติยอดรวมทั้งหมด"):
+        st.session_state.history_log = []
+        st.rerun()
+else:
+    st.info(
+        "ℹ️ ยังไม่มีประวัติยอดรวมที่บันทึกไว้ กรุณาอัปโหลดไฟล์แล้วกดปุ่มบันทึกด้านบน"
+    )
