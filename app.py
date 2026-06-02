@@ -1,4 +1,5 @@
 import datetime
+import io  # เพิ่มส่วนประกอบสำหรับจัดการแปลงข้อมูลเป็นไฟล์ให้ดาวน์โหลด
 import pandas as pd
 import plotly.express as px
 import streamlit as st
@@ -8,9 +9,9 @@ st.set_page_config(
     page_title="ระบบสต็อกสินค้าจริง", page_icon="📦", layout="centered"
 )
 
-st.title("📦 ระบบตรวจสอบและบันทึกประวัติสต็อก (เฉพาะงานจริง)")
+st.title("📦 ระบบตรวจสอบและส่งออกประวัติสต็อก (เฉพาะงานจริง)")
 st.write(
-    "ระบบนับยอดชิ้นงานผลิตจริงตามรหัสสินค้า (SN): ไม่รวม MASTER, ตัดตัวซ้ำ, และเปลี่ยนตัวอักษร `O` ในรหัสพนักงานเป็นเลข `0` อัตโนมัติ"
+    "ระบบนับยอดชิ้นงานผลิตจริงตามรหัสสินค้า (SN): ไม่รวม MASTER, ตัดตัวซ้ำ, แก้รหัสพิมพ์สลับ ตัว O ➡️ เลข 0 และส่งออกไฟล์ Excel ได้"
 )
 
 # --------------------------------------------------
@@ -63,7 +64,7 @@ if uploaded_files:
                         .str.replace("O", "0", case=False)
                     )
 
-                    # 🚨 [จุดสำคัญ] กรองตัดสถานีที่เป็น MASTER หรือ master ออกไปเลย 100%
+                    # 🚨 กรองตัดสถานีที่เป็น MASTER หรือ master ออกไปเลย 100%
                     df_clean = df_clean[
                         df_clean["STATION"].str.upper() != "MASTER"
                     ]
@@ -76,7 +77,7 @@ if uploaded_files:
         # รวมข้อมูลดิบจากทุกไฟล์เข้าด้วยกัน
         raw_combined_df = pd.concat(all_file_data, ignore_index=True)
 
-        # 🎯 [ตัดตัวซ้ำ] ยุบแถวที่ SN ซ้ำกันให้เหลือชิ้นเดียว ได้ยอดเนื้องานที่ปรับจริง ไม่บวมตามรอบอุณหภูมิ
+        # 🎯 [ตัดตัวซ้ำ] ยุบแถวที่ SN ซ้ำกันให้เหลือชิ้นเดียว ได้ยอดเนื้องานที่ปรับจริง
         combined_df = raw_combined_df.drop_duplicates(subset=["SN"], keep="first")
 
         if not combined_df.empty:
@@ -104,7 +105,27 @@ if uploaded_files:
                     f"👤 รหัสพนักงาน: **{row['รหัสพนักงาน (EMP ID)']}** ➡️ ยอดปรับสินค้าจริงรวมทั้งหมด **{row['จำนวนรวมแท้จริง (ตัว)']:,}** ตัว"
                 )
 
+            # --------------------------------------------------
+            # 📥 [ฟังก์ชันใหม่] ระบบส่งออกเป็นไฟล์ Excel (.xlsx)
+            # --------------------------------------------------
+            st.markdown("### 📥 ดาวน์โหลดรายงานสรุป")
+            
+            # แปลงข้อมูลในตาราง emp_total_df ให้กลายเป็นไฟล์ Excel ในหน่วยความจำ (Buffer)
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+                emp_total_df.to_excel(writer, index=False, sheet_name="Summary")
+            buffer.seek(0)
+
+            # สร้างปุ่มสำหรับกดดาวน์โหลดไฟล์ Excel ออกไปนอกระบบ
+            st.download_button(
+                label="🟢 คลิกที่นี่เพื่อดาวน์โหลดรายงานสรุปเป็นไฟล์ Excel",
+                data=buffer,
+                file_name=f"สรุปยอดปรับรุ่นจริง_{datetime.date.today()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
             # 3. แสดงกราฟแท่งเปรียบเทียบยอดงานจริงรายคน
+            st.markdown("---")
             fig = px.bar(
                 emp_total_df,
                 x="รหัสพนักงาน (EMP ID)",
@@ -163,6 +184,20 @@ if st.session_state.history_log:
 
     st.metric("ยอดนับสินค้าสะสมรวมในระบบทั้งหมด (ไม่รวม MASTER)", f"{total_accumulated:,} ตัว")
     st.dataframe(history_df, use_container_width=True, hide_index=True)
+
+    # 📥 [ฟังก์ชันใหม่] ปุ่มส่งออกไฟล์ Excel สำหรับตารางประวัติสะสมย้อนหลังระยะยาว
+    buffer_history = io.BytesIO()
+    with pd.ExcelWriter(buffer_history, engine="openpyxl") as writer:
+        history_df.to_excel(writer, index=False, sheet_name="History_Log")
+    buffer_history.seek(0)
+
+    st.download_button(
+        label="🔵 คลิกที่นี่เพื่อดาวน์โหลดคลังประวัติสะสมทั้งหมดเป็นไฟล์ Excel",
+        data=buffer_history,
+        file_name=f"คลังประวัติสต็อกสะสม_{datetime.date.today()}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    st.write("") # เว้นช่องไฟ
 
     if st.button("🗑️ ล้างประวัติยอดรวมทั้งหมด"):
         st.session_state.history_log = []
