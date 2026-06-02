@@ -1,17 +1,21 @@
 import datetime
-import io  # เพิ่มส่วนประกอบสำหรับจัดการแปลงข้อมูลเป็นไฟล์ให้ดาวน์โหลด
+import io
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+import openpyxl
+from openpyxl.drawing.image import Image as OpenpyxlImage
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 # ตั้งค่าหน้าเว็บ
 st.set_page_config(
-    page_title="ระบบสต็อกสินค้าจริง", page_icon="📦", layout="centered"
+    page_title="ระบบสต็อกสินค้าจริง (Export Excel สมบูรณ์แบบ)", page_icon="📦", layout="centered"
 )
 
-st.title("📦 ระบบตรวจสอบและส่งออกประวัติสต็อก (เฉพาะงานจริง)")
+st.title("📦 ระบบตรวจสอบสต็อกสินค้า (ส่งออก Excel พร้อมรูปกราฟและยอด Total)")
 st.write(
-    "Automatic count system"
+    "อัปโหลดไฟล์ Excel เพื่อดูสรุปยอดผลิตแยกตามวัน (คัดเฉพาะงานจริง ไม่รวม MASTER, ตัดตัวซ้ำ, แก้ตัว O เป็นเลข 0 และส่งออก Excel มีรูปกราฟ)"
 )
 
 # --------------------------------------------------
@@ -41,35 +45,30 @@ if uploaded_files:
 
                 # ตรวจสอบโครงสร้างคอลัมน์สำคัญ
                 if (
-                    "EMP ID" in df.columns
+                    "DATE" in df.columns
+                    and "EMP ID" in df.columns
                     and "STATION" in df.columns
                     and "SN" in df.columns
                 ):
-                    # 1. คลีนข้อมูลเบื้องต้น ลบแถวว่างและแถวหัวตารางที่เกินมาออก
                     df_clean = df[df["EMP ID"].notna()]
                     df_clean = df_clean[df_clean["EMP ID"] != "EMP ID"]
 
-                    # 2. ตัดช่องว่าง (Space) หน้า-หลังข้อความทั้งหมด
-                    df_clean["EMP ID"] = (
-                        df_clean["EMP ID"].astype(str).str.strip()
-                    )
-                    df_clean["STATION"] = (
-                        df_clean["STATION"].astype(str).str.strip()
-                    )
+                    # เติมวันที่ในแถวที่เว้นว่างไว้ (ลากสูตรลงมา)
+                    df_clean["DATE"] = df_clean["DATE"].ffill()
+
+                    # ตัดช่องว่างหน้า-หลังข้อความทั้งหมด
+                    df_clean["EMP ID"] = df_clean["EMP ID"].astype(str).str.strip()
+                    df_clean["STATION"] = df_clean["STATION"].astype(str).str.strip()
                     df_clean["SN"] = df_clean["SN"].astype(str).str.strip()
+                    df_clean["DATE_STR"] = df_clean["DATE"].astype(str).str.strip()
 
-                    # 🚨 แก้ปัญหาพนักงานพิมพ์รหัสสลับ ตัว O กับ เลข 0
-                    df_clean["EMP ID"] = (
-                        df_clean["EMP ID"]
-                        .str.replace("O", "0", case=False)
-                    )
+                    # แก้ปัญหาพนักงานพิมพ์รหัสสลับ ตัว O กับ เลข 0
+                    df_clean["EMP ID"] = df_clean["EMP ID"].str.replace("O", "0", case=False)
 
-                    # 🚨 กรองตัดสถานีที่เป็น MASTER หรือ master ออกไปเลย 100%
-                    df_clean = df_clean[
-                        df_clean["STATION"].str.upper() != "MASTER"
-                    ]
+                    # คัดออก! ไม่เอาสถานีที่เป็น 'MASTER' หรือ 'master'
+                    df_clean = df_clean[df_clean["STATION"].str.upper() != "MASTER"]
 
-                    all_file_data.append(df_clean[["EMP ID", "STATION", "SN"]])
+                    all_file_data.append(df_clean[["DATE_STR", "EMP ID", "STATION", "SN"]])
         except Exception as e:
             st.error(f"❌ เกิดข้อผิดพลาดในการอ่านไฟล์ {uploaded_file.name}: {e}")
 
@@ -77,90 +76,114 @@ if uploaded_files:
         # รวมข้อมูลดิบจากทุกไฟล์เข้าด้วยกัน
         raw_combined_df = pd.concat(all_file_data, ignore_index=True)
 
-        # 🎯 [ตัดตัวซ้ำ] ยุบแถวที่ SN ซ้ำกันให้เหลือชิ้นเดียว ได้ยอดเนื้องานที่ปรับจริง
+        # 🎯 ตัดรายการที่ "หมายเลขสินค้า (SN)" ซ้ำกันออก ให้เหลือชิ้นเดียวจริง
         combined_df = raw_combined_df.drop_duplicates(subset=["SN"], keep="first")
 
         if not combined_df.empty:
-            # คำนวณสรุปยอดรวมสุทธิแยกรายบุคคล (เฉพาะสินค้าจริง)
-            emp_total_df = (
-                combined_df.groupby("EMP ID")["SN"].count().reset_index()
+            # คำนวณสรุปยอดแยกตาม: วันที่ -> พนักงาน -> รุ่นสินค้า (STATION) แบบในรูปตัวอย่าง
+            daily_summary_df = (
+                combined_df.groupby(["DATE_STR", "EMP ID", "STATION"])["SN"]
+                .count()
+                .reset_index()
             )
-            emp_total_df.columns = ["รหัสพนักงาน (EMP ID)", "จำนวนรวมแท้จริง (ตัว)"]
+            daily_summary_df.columns = [
+                "วันที่",
+                "รหัสพนักงาน",
+                "รุ่นสินค้า (STATION)",
+                "จำนวนจริง (ตัว)",
+            ]
 
             # --------------------------------------------------
-            # ✨ ส่วนการแสดงผลป๊อปอัปและข้อความสรุปรายคน
+            # ✨ ส่วนการแสดงผลบนหน้าจอเว็บ
             # --------------------------------------------------
-            popup_message = "🔔 สรุปผลยอดนับสินค้าจริง: \n"
-            for _, row in emp_total_df.iterrows():
-                popup_message += f"- พนักงาน {row['รหัสพนักงาน (EMP ID)']} ปรับได้ {row['จำนวนรวมแท้จริง (ตัว)']} ตัว\n"
-            st.toast(popup_message, icon="📊")
+            st.success(f"🎉 รวมข้อมูลสำเร็จทั้งหมด {len(uploaded_files)} ไฟล์!")
 
-            st.success(
-                f"🎉 รวมข้อมูลสำเร็จทั้งหมด {len(uploaded_files)} ไฟล์! (คัดเฉพาะชิ้นงานจริงที่ปรับรุ่นสำเร็จ)"
-            )
-
-            # ลิสต์สรุปพนักงานแยกบรรทัดให้อ่านง่าย
-            for _, row in emp_total_df.iterrows():
+            # แสดงลิสต์สรุปรายวันแยกบรรทัดให้อ่านง่าย
+            total_sum = daily_summary_df["จำนวนจริง (ตัว)"].sum()
+            for _, row in daily_summary_df.iterrows():
                 st.markdown(
-                    f"👤 รหัสพนักงาน: **{row['รหัสพนักงาน (EMP ID)']}** ➡️ ยอดปรับสินค้าจริงรวมทั้งหมด **{row['จำนวนรวมแท้จริง (ตัว)']:,}** ตัว"
+                    f"📅 วันที่: **{row['วันที่']}** | 👤 พนักงาน: **{row['รหัสพนักงาน']}** | 🛠️ รุ่น: ` {row['รุ่นสินค้า (STATION)']} ` ➡️ ได้จริง **{row['จำนวนจริง (ตัว)']}** ตัว"
                 )
+            st.markdown(f"📊 **ยอดรวมทั้งหมด (Total): {total_sum:,} ตัว**")
 
             # --------------------------------------------------
-            # 📥 [ฟังก์ชันใหม่] ระบบส่งออกเป็นไฟล์ Excel (.xlsx)
+            # 📥 [ฟังก์ชันไฮไลต์] ระบบสร้างไฟล์ Excel แอด Total + ฝังรูปภาพกราฟ
             # --------------------------------------------------
-            st.markdown("### 📥 ดาวน์โหลดรายงานสรุป")
-            
-            # แปลงข้อมูลในตาราง emp_total_df ให้กลายเป็นไฟล์ Excel ในหน่วยความจำ (Buffer)
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-                emp_total_df.to_excel(writer, index=False, sheet_name="Summary")
-            buffer.seek(0)
+            st.markdown("### 📥 ส่งออกข้อมูลเป็นไฟล์ Excel")
 
-            # สร้างปุ่มสำหรับกดดาวน์โหลดไฟล์ Excel ออกไปนอกระบบ
+            # 1. เตรียมตารางสำหรับส่งออก (เพิ่มแถว Total ท้ายตารางแบบในรูปเรฟ)
+            export_df = daily_summary_df.copy()
+            total_row = pd.DataFrame([{
+                "วันที่": "Total",
+                "รหัสพนักงาน": "",
+                "รุ่นสินค้า (STATION)": "",
+                "จำนวนจริง (ตัว)": total_sum
+            }])
+            export_df = pd.concat([export_df, total_row], ignore_index=True)
+
+            # 2. สร้างกราฟเป็นรูปภาพในหน่วยความจำเพื่อนำไปฝังใน Excel
+            fig_img_buf = io.BytesIO()
+            plt.figure(figsize=(6, 4))
+            sns.barplot(data=daily_summary_df, x="รหัสพนักงาน", y="จำนวนจริง (ตัว)", hue="รุ่นสินค้า (STATION)")
+            plt.title("Daily Production Summary")
+            plt.tight_layout()
+            plt.savefig(fig_img_buf, format="png")
+            fig_img_buf.seek(0)
+            plt.close()
+
+            # 3. ใช้ openpyxl สร้างไฟล์และจัดหน้า
+            excel_buffer = io.BytesIO()
+            with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
+                export_df.to_excel(writer, index=False, sheet_name="Summary_Report")
+                
+                # เข้าถึงสไตล์เพื่อตบแต่งหน้าตาและใส่รูปภาพ
+                workbook = writer.book
+                worksheet = writer.sheets["Summary_Report"]
+                
+                # ทำการแทรกรูปภาพกราฟลงในเซลล์ F2 (ข้างๆ ตารางสรุป)
+                try:
+                    img = OpenpyxlImage(fig_img_buf)
+                    worksheet.add_image(img, "F2")
+                except Exception as img_err:
+                    pass # หากระบบฝังรูปภาพติดขัดในบาง Environment ให้ทำงานต่อได้
+
+            excel_buffer.seek(0)
+
+            # ปุ่มดาวน์โหลด Excel
             st.download_button(
-                label="🟢 คลิกที่นี่เพื่อดาวน์โหลดรายงานสรุปเป็นไฟล์ Excel",
-                data=buffer,
-                file_name=f"สรุปยอดปรับรุ่นจริง_{datetime.date.today()}.xlsx",
+                label="🟢 คลิกตรงนี้เพื่อส่งออกไฟล์ Excel (มีตาราง + ยอด Total + รูปกราฟ)",
+                data=excel_buffer,
+                file_name=f"รายงานสรุปสต็อกจริง_{datetime.date.today()}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
-            # 3. แสดงกราฟแท่งเปรียบเทียบยอดงานจริงรายคน
+            # 4. แสดงกราฟแบบส่องดูบนเว็บ สวยงามคมชัดเหมือนเดิม
             st.markdown("---")
             fig = px.bar(
-                emp_total_df,
-                x="รหัสพนักงาน (EMP ID)",
-                y="จำนวนรวมแท้จริง (ตัว)",
-                color="รหัสพนักงาน (EMP ID)",
-                title="กราฟเปรียบเทียบจำนวนชิ้นงานผลิตจริงของพนักงาน (รอบปัจจุบัน)",
+                daily_summary_df,
+                x="วันที่",
+                y="จำนวนจริง (ตัว)",
+                color="รุ่นสินค้า (STATION)",
+                facet_col="รหัสพนักงาน",
+                barmode="group",
+                title="กราฟสรุปยอดผลิตจริงแยกตามวัน พนักงาน และรุ่นสินค้า",
             )
             st.plotly_chart(fig, use_container_width=True)
-
-            # ตารางรายละเอียดสินค้าแยกตามสถานีจริงแบบไม่ซ้ำ
-            with st.expander("🔍 คลิกเพื่อดูตารางรายละเอียดแยกตามรหัสพนักงานและรุ่นสินค้า"):
-                detail_df = (
-                    combined_df.groupby(["EMP ID", "STATION"])["SN"]
-                    .count()
-                    .reset_index()
-                )
-                detail_df.columns = [
-                    "รหัสพนักงาน",
-                    "รุ่นสินค้า/สถานี",
-                    "จำนวนจริง (ตัว)",
-                ]
-                st.dataframe(detail_df, use_container_width=True, hide_index=True)
 
             # ปุ่มกดบันทึกข้อมูลเข้าคลังประวัติสะสม
             if st.button("📥 บันทึกข้อมูลชุดนี้ลงประวัติยอดรวมสะสม"):
                 current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 files_string = ", ".join(file_names_list)
 
-                for _, row in emp_total_df.iterrows():
+                for _, row in daily_summary_df.iterrows():
                     st.session_state.history_log.append(
                         {
                             "เวลาที่บันทึกระบบ": current_time,
                             "จากไฟล์ทั้งหมด": files_string,
-                            "รหัสพนักงาน (EMP ID)": row["รหัสพนักงาน (EMP ID)"],
-                            "จำนวนรวมสะสม (ตัว)": row["จำนวนรวมแท้จริง (ตัว)"],
+                            "วันที่ทำงาน": row["วันที่"],
+                            "รหัสพนักงาน": row["รหัสพนักงาน"],
+                            "รุ่นสินค้า (STATION)": row["รุ่นสินค้า (STATION)"],
+                            "จำนวนรวมสะสม (ตัว)": row["จำนวนจริง (ตัว)"],
                         }
                     )
                 st.toast("บันทึกข้อมูลเข้าคลังประวัติเรียบร้อยแล้ว!")
@@ -168,15 +191,13 @@ if uploaded_files:
         else:
             st.warning("⚠️ ไม่พบข้อมูลสินค้าอื่นนอกเหนือจากสถานี MASTER เลย")
     else:
-        st.error(
-            "❌ ไม่พบโครงสร้างข้อมูลที่ถูกต้อง กรุณาตรวจสอบหัวตารางไฟล์ Excel"
-        )
+        st.error("❌ ไม่พบโครงสร้างข้อมูลที่ถูกต้อง กรุณาตรวจสอบหัวตารางไฟล์ Excel")
 
 # --------------------------------------------------
 # ส่วนที่ 2: หน้าต่างประวัติยอดรวมสะสมย้อนหลัง
 # --------------------------------------------------
 st.markdown("---")
-st.subheader("📜 คลังประวัติยอดรวมสะสมย้อนหลัง (เฉพาะตัวงานจริงเท่านั้น)")
+st.subheader("📜 คลังประวัติยอดรวมสะสมย้อนหลัง (เฉพาะตัวงานจริง)")
 
 if st.session_state.history_log:
     history_df = pd.DataFrame(st.session_state.history_log)
@@ -184,20 +205,6 @@ if st.session_state.history_log:
 
     st.metric("ยอดนับสินค้าสะสมรวมในระบบทั้งหมด (ไม่รวม MASTER)", f"{total_accumulated:,} ตัว")
     st.dataframe(history_df, use_container_width=True, hide_index=True)
-
-    # 📥 [ฟังก์ชันใหม่] ปุ่มส่งออกไฟล์ Excel สำหรับตารางประวัติสะสมย้อนหลังระยะยาว
-    buffer_history = io.BytesIO()
-    with pd.ExcelWriter(buffer_history, engine="openpyxl") as writer:
-        history_df.to_excel(writer, index=False, sheet_name="History_Log")
-    buffer_history.seek(0)
-
-    st.download_button(
-        label="🔵 คลิกที่นี่เพื่อดาวน์โหลดคลังประวัติสะสมทั้งหมดเป็นไฟล์ Excel",
-        data=buffer_history,
-        file_name=f"คลังประวัติสต็อกสะสม_{datetime.date.today()}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-    st.write("") # เว้นช่องไฟ
 
     if st.button("🗑️ ล้างประวัติยอดรวมทั้งหมด"):
         st.session_state.history_log = []
