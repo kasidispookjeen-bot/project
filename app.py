@@ -5,12 +5,12 @@ import streamlit as st
 
 # ตั้งค่าหน้าเว็บ
 st.set_page_config(
-    page_title="ระบบสต็อกอัจฉริยะ แบบ 2 โหมด", page_icon="📦", layout="centered"
+    page_title="ระบบตรวจสอบสต็อกรายวัน", page_icon="📦", layout="centered"
 )
 
-st.title("📦 ระบบ ตรวจสอบสต็อกสินค้า (Multi-Mode)")
+st.title("📦 ระบบตรวจสอบสต็อกสินค้า (แยกสรุปยอดตามรายวัน)")
 st.write(
-    "อัปโหลดไฟล์ Excel เพื่อดูสรุปยอดผลิตรายวัน (ระบบตัดรายการซ้ำและรวมรหัสพนักงานที่พิมพ์ผิดให้อัตโนมัติ)"
+    "อัปโหลดไฟล์ Excel เพื่อดูสรุปยอดผลิตแยกตามวัน พนักงาน และรุ่นสินค้า (ระบบตัด MASTER และตัวซ้ำให้อัตโนมัติ)"
 )
 
 # --------------------------------------------------
@@ -49,7 +49,7 @@ if uploaded_files:
                     df_clean = df[df["EMP ID"].notna()]
                     df_clean = df_clean[df_clean["EMP ID"] != "EMP ID"]
 
-                    # 2. เติมวันที่ในแถวที่ปล่อยเว้นว่างไว้ (ลากสูตรลงมา)
+                    # 2. เติมวันที่ในแถวที่ปล่อยเว้นว่างไว้ใน Excel (ลากสูตรลงมา)
                     df_clean["DATE"] = df_clean["DATE"].ffill()
 
                     # 3. ตัดช่องว่าง (Space) หน้า-หลังข้อความทั้งหมด
@@ -69,6 +69,11 @@ if uploaded_files:
                         "O", "0", case=False
                     )
 
+                    # 🚨 คัดออก! ไม่เอาสถานีที่เป็น 'MASTER' หรือ 'master'
+                    df_clean = df_clean[
+                        df_clean["STATION"].str.upper() != "MASTER"
+                    ]
+
                     all_file_data.append(
                         df_clean[["DATE_STR", "EMP ID", "STATION", "SN"]]
                     )
@@ -76,40 +81,16 @@ if uploaded_files:
             st.error(f"❌ เกิดข้อผิดพลาดในการอ่านไฟล์ {uploaded_file.name}: {e}")
 
     if all_file_data:
-        # รวมข้อมูลดิบทั้งหมดจากทุกไฟล์
+        # รวมข้อมูลดิบจากทุกไฟล์เข้าด้วยกัน
         raw_combined_df = pd.concat(all_file_data, ignore_index=True)
 
         # 🎯 ตัดรายการที่ "หมายเลขสินค้า (SN)" ซ้ำกันออก ให้เหลือชิ้นเดียว (ป้องกันยอดเบิ้ล)
         combined_df = raw_combined_df.drop_duplicates(subset=["SN"], keep="first")
 
-        # --------------------------------------------------
-        # ✨ เพิ่มระบบปุ่มกดเลือกโหมด (2 โหมด)
-        # --------------------------------------------------
-        st.markdown("---")
-        st.subheader("⚙️ เลือกโหมดการแสดงผลข้อมูล")
-        view_mode = st.radio(
-            "คุณต้องการดูข้อมูลในรูปแบบใด?",
-            (
-                "🟢 เฉพาะสินค้าจริง (ไม่นับ MASTER)",
-                "🔵 รวมยอดทั้งหมด (นับรวมสถานี MASTER)",
-            ),
-            horizontal=True,
-        )
-
-        # ทำการกรองข้อมูลตามโหมดที่เลือก
-        if "เฉพาะสินค้าจริง" in view_mode:
-            # คัดตัวที่เป็น MASTER ออกไปให้หมด
-            display_df = combined_df[combined_df["STATION"].str.upper() != "MASTER"]
-            mode_title = "เฉพาะสินค้าจริง (ไม่รวม MASTER)"
-        else:
-            # ปล่อยไว้ปกติ ให้ดึงทุกสถานีรวมถึง MASTER ด้วย
-            display_df = combined_df
-            mode_title = "รวมยอดทั้งหมด (รวม MASTER)"
-
-        if not display_df.empty:
+        if not combined_df.empty:
             # คำนวณสรุปยอดแยกตาม: วันที่ -> พนักงาน -> รุ่นสินค้า (STATION)
             daily_summary_df = (
-                display_df.groupby(["DATE_STR", "EMP ID", "STATION"])["SN"]
+                combined_df.groupby(["DATE_STR", "EMP ID", "STATION"])["SN"]
                 .count()
                 .reset_index()
             )
@@ -121,17 +102,27 @@ if uploaded_files:
             ]
 
             # --------------------------------------------------
-            # แสดงผลลัพธ์ตามโหมดที่เลือก
+            # ✨ ส่วนการแสดงผลป๊อปอัปแจ้งเตือนและกล่องเขียวรายวัน
             # --------------------------------------------------
-            st.success(f"🎉 แสดงผลข้อมูลในโหมด: **{mode_title}** สำเร็จ!")
+            # 1. ทำป๊อปอัปเด้งเตือน (Toast Notification) ขวาบานล่างของจอ
+            popup_message = "🔔 สรุปยอดผลิตรายวันสำเร็จ:\n"
+            for _, row in daily_summary_df.iterrows():
+                popup_message += f"- วันที่ {row['วันที่']} | พนักงาน {row['รหัสพนักงาน (EMP ID)']} ปรับรุ่น {row['รุ่นสินค้า (STATION)']} = {row['จำนวนที่ผลิตได้ (ตัว)']} ตัว\n"
+            st.toast(popup_message, icon="📊")
 
-            # แสดงลิสต์สรุปรายวันแยกบรรทัด
+            # 2. กล่องข้อความสีเขียวแจ้งสรุปผลเด่นๆ ชัดๆ ด้านบนเว็บ
+            st.success(
+                f"🎉 รวมข้อมูลสำเร็จทั้งหมด {len(uploaded_files)} ไฟล์! (แยกตามวันและรุ่นสินค้าเรียบร้อย)"
+            )
+
+            # แสดงลิสต์สรุปรายวันแยกบรรทัดให้อ่านง่ายกระชับ
             for _, row in daily_summary_df.iterrows():
                 st.markdown(
-                    f"📅 วันที่: **{row['วันที่']}** | 👤 พนักงาน: **{row['รหัสพนักงาน (EMP ID)']}** | 🛠️ รุ่น: ` {row['รุ่นสินค้า (STATION)']} ` ➡️ จำนวน: **{row['จำนวนที่ผลิตได้ (ตัว)']:,}** ตัว"
+                    f"📅 วันที่: **{row['วันที่']}** 👤 พนักงาน: **{row['รหัสพนักงาน (EMP ID)']}** 🛠️ ปรับรุ่น: ` {row['รุ่นสินค้า (STATION)']} ` ➡️ ได้ของแท้จริง **{row['จำนวนที่ผลิตได้ (ตัว)']:,}** ตัว"
                 )
 
-            # แสดงกราฟแท่งตามโหมดนั้นๆ
+            # 3. แสดงกราฟแท่งเปรียบเทียบผลงานรายวันแยกตามรุ่นสินค้า
+            # ช่วยให้มองเห็นเลยว่าวันไหนรุ่นไหนได้ยอดเยอะที่สุด
             fig = px.bar(
                 daily_summary_df,
                 x="วันที่",
@@ -139,18 +130,18 @@ if uploaded_files:
                 color="รุ่นสินค้า (STATION)",
                 facet_col="รหัสพนักงาน (EMP ID)",
                 barmode="group",
-                title=f"กราฟสรุปยอดผลิตจริง ({mode_title})",
+                title="กราฟสรุปยอดผลิตจริงแยกตามวัน พนักงาน และรุ่นสินค้า",
             )
             st.plotly_chart(fig, use_container_width=True)
 
-            # ตารางข้อมูลสรุปใต้กราฟ
-            with st.expander("🔍 คลิกเพื่อดูตารางสรุปข้อมูลโหมดนี้แบบทั้งหมด"):
+            # ตารางข้อมูลดิบแบบละเอียดสำหรับกดดาวน์โหลดหรือตรวจสอบซ้ำ
+            with st.expander("🔍 คลิกเพื่อดูตารางสรุปข้อมูลทั้งหมด"):
                 st.dataframe(
                     daily_summary_df, use_container_width=True, hide_index=True
                 )
 
-            # ปุ่มกดบันทึกข้อมูลเข้าคลังประวัติสะสม
-            if st.button("📥 บันทึกข้อมูลในโหมดนี้ลงประวัติยอดรวมสะสม"):
+            # ปุ่มกดบันทึกข้อมูลเข้าคลังประวัติสะสมระยะยาว
+            if st.button("📥 บันทึกข้อมูลชุดนี้ลงประวัติยอดรวมสะสม"):
                 current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 files_string = ", ".join(file_names_list)
 
@@ -159,7 +150,6 @@ if uploaded_files:
                         {
                             "เวลาที่บันทึกระบบ": current_time,
                             "จากไฟล์ทั้งหมด": files_string,
-                            "โหมดที่บันทึก": mode_title,
                             "วันที่ทำงาน": row["วันที่"],
                             "รหัสพนักงาน (EMP ID)": row["รหัสพนักงาน (EMP ID)"],
                             "รุ่นสินค้า (STATION)": row["รุ่นสินค้า (STATION)"],
@@ -169,7 +159,9 @@ if uploaded_files:
                 st.toast("บันทึกข้อมูลเข้าคลังประวัติเรียบร้อยแล้ว!")
                 st.rerun()
         else:
-            st.warning("⚠️ ไม่พบข้อมูลที่จะแสดงในโหมดนี้")
+            st.warning(
+                "⚠️ ไม่พบข้อมูลสินค้าตัวอื่นเลยหลังจากคัดสถานี MASTER ออกแล้ว"
+            )
     else:
         st.error(
             "❌ ไม่พบโครงสร้างข้อมูลที่ถูกต้อง กรุณาตรวจสอบหัวตารางไฟล์ Excel"
@@ -179,13 +171,15 @@ if uploaded_files:
 # ส่วนที่ 2: หน้าต่างคลังประวัติยอดรวมสะสมย้อนหลัง
 # --------------------------------------------------
 st.markdown("---")
-st.subheader("📜 คลังประวัติยอดรวมสะสมย้อนหลัง")
+st.subheader("📜 คลังประวัติยอดรวมสะสมย้อนหลัง (ตัวงานจริงรายวัน)")
 
 if st.session_state.history_log:
     history_df = pd.DataFrame(st.session_state.history_log)
     total_accumulated = history_df["จำนวนรวมสะสม (ตัว)"].sum()
 
-    st.metric("ยอดนับสินค้าสะสมรวมในระบบทั้งหมด", f"{total_accumulated:,} ตัว")
+    st.metric(
+        "ยอดผลิตสะสมรวมในระบบทั้งหมด (ไม่นับ MASTER)", f"{total_accumulated:,} ตัว"
+    )
     st.dataframe(history_df, use_container_width=True, hide_index=True)
 
     if st.button("🗑️ ล้างประวัติยอดรวมทั้งหมด"):
