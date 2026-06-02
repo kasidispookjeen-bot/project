@@ -29,8 +29,8 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<p class="main-title">📦 ระบบตรวจสอบและส่งออกประวัติสต็อก (เฉพาะงานจริง)</p>', unsafe_allow_html=True)
-st.markdown('<p class="sub-title">ระบบนับยอดชิ้นงานผลิตจริงตามรหัสสินค้า (SN): ไม่รวม MASTER, ตัดตัวซ้ำ, แก้รหัสพิมพ์สลับ ตัว O ➡️ เลข 0 และส่งออกไฟล์ Excel ได้</p>', unsafe_allow_html=True)
+st.markdown('<p class="main-title">📦 ระบบตรวจสอบและส่งออกประวัติสต็อก (SAMPLE ONLY)</p>', unsafe_allow_html=True)
+st.markdown('<p class="sub-title">ระบบนับยอดชิ้นงานผลิตจริงตามรหัสสินค้า (SN):AUTOMATIC COUNT SYSTEM</p>', unsafe_allow_html=True)
 
 # --------------------------------------------------
 # ระบบฐานข้อมูลจำลอง (ประวัติยอดรวมสะสม)
