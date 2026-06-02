@@ -4,12 +4,12 @@ import streamlit as st
 
 # ตั้งค่าหน้าเว็บ
 st.set_page_config(
-    page_title="ระบบอ่านไฟล์นับสต็อกแบบหลายไฟล์", page_icon="📦", layout="centered"
+    page_title="ระบบอ่านไฟล์นับสต็อกอัจฉริยะ", page_icon="📦", layout="centered"
 )
 
 st.title("📦 ระบบตรวจสอบและบันทึกประวัติสต็อก (อัปโหลดหลายไฟล์)")
 st.write(
-    "คุณสามารถเลือกหรือลากไฟล์ Excel หลายๆ ไฟล์มาวางพร้อมกันได้ ระบบจะรวมยอดให้อัตโนมัติ"
+    "อัปโหลดไฟล์ Excel หลายๆ ไฟล์พร้อมกัน ระบบจะรวมยอดและแสดงสรุปผลแยกพนักงานให้ทันที"
 )
 
 # --------------------------------------------------
@@ -18,45 +18,50 @@ st.write(
 if "history_log" not in st.session_state:
     st.session_state.history_log = []
 
-# ส่วนอัปโหลดไฟล์ (เปิดใช้งาน accept_multiple_files=True)
+# ส่วนอัปโหลดไฟล์
 uploaded_files = st.file_uploader(
-    "เลือกไฟล์ Excel ของคุณ (เลือกได้ทีละหลายไฟล์)",
+    "เลือกหรือลากไฟล์ Excel ของคุณมาวางที่นี่ (เลือกได้หลายไฟล์)",
     type=["xlsx", "xls"],
     accept_multiple_files=True,
 )
 
-# ตรวจสอบว่ามีการอัปโหลดไฟล์เข้ามาอย่างน้อย 1 ไฟล์ไหม
+# ตรวจสอบเมื่อมีการอัปโหลดไฟล์เข้ามา
 if uploaded_files:
     all_file_data = []
     file_names_list = []
 
-    # วนลูปอ่านทีละไฟล์ที่อัปโหลดเข้ามา
     for uploaded_file in uploaded_files:
         try:
             xls = pd.ExcelFile(uploaded_file)
             file_names_list.append(uploaded_file.name)
 
-            # วนลูปอ่านทุกชีตในไฟล์นั้นๆ
             for sheet_name in xls.sheet_names:
                 df = pd.read_excel(uploaded_file, sheet_name=sheet_name)
 
-                required_cols = ["EMP ID", "STATION", "SN"]
-                if "EMP ID" in df.columns and "STATION" in df.columns and "SN" in df.columns:
+                # ตรวจสอบคอลัมน์สำคัญ
+                if (
+                    "EMP ID" in df.columns
+                    and "STATION" in df.columns
+                    and "SN" in df.columns
+                ):
                     df_clean = df[df["EMP ID"].notna()]
                     df_clean = df_clean[df_clean["EMP ID"] != "EMP ID"]
 
-                    df_clean["EMP ID"] = df_clean["EMP ID"].astype(str).str.strip()
-                    df_clean["STATION"] = df_clean["STATION"].astype(str).str.strip()
+                    df_clean["EMP ID"] = (
+                        df_clean["EMP ID"].astype(str).str.strip()
+                    )
+                    df_clean["STATION"] = (
+                        df_clean["STATION"].astype(str).str.strip()
+                    )
 
                     all_file_data.append(df_clean[["EMP ID", "STATION", "SN"]])
         except Exception as e:
             st.error(f"❌ เกิดข้อผิดพลาดในการอ่านไฟล์ {uploaded_file.name}: {e}")
 
-    # ถ้ารวมข้อมูลจากทุกไฟล์แล้วมีข้อมูลที่ใช้งานได้
     if all_file_data:
         combined_df = pd.concat(all_data := all_file_data, ignore_index=True)
 
-        # คำนวณสรุปรวมของทุกไฟล์ที่อัปโหลดเข้ามาในรอบนี้
+        # คำนวณสรุปรวมแยกตามพนักงานและสถานี เพื่อนำไปแสดงในตาราง
         summary_df = (
             combined_df.groupby(["EMP ID", "STATION"])["SN"]
             .count()
@@ -68,25 +73,42 @@ if uploaded_files:
             "จำนวนที่นับได้ (ตัว)",
         ]
 
-        st.success(f"✅ อ่านข้อมูลสำเร็จทั้งหมด {len(uploaded_files)} ไฟล์!")
-
-        # แสดงตารางผลลัพธ์รวมของไฟล์ชุดนี้
-        st.subheader("📊 ผลการนับสต็อกจากชุดไฟล์ที่อัปโหลดปัจจุบัน")
-        st.dataframe(summary_df, use_container_width=True, hide_index=True)
-
-        total_items = len(combined_df)
-        unique_staff = combined_df["EMP ID"].nunique()
-
-        st.write(
-            f"💡 ชุดไฟล์นี้มีพนักงานทำงานรวม **{unique_staff} คน** ยอดนับรวมทั้งหมด **{total_items} ตัว**"
+        # คำนวณยอดรวมสุทธิแยกรายบุคคล (พนักงาน 1 คน นับได้รวมกี่ตัวจากทุกสินค้า)
+        emp_total_df = (
+            combined_df.groupby("EMP ID")["SN"].count().reset_index()
         )
+
+        # --------------------------------------------------
+        # ✨ ส่วนป๊อปอัปแจ้งเตือนและแสดงยอดแยกรายบุคคล
+        # --------------------------------------------------
+        # 1. ทำป๊อปอัปข้อความเด้งเตือน (Toast Notification) สรุปยอดพนักงานแต่ละคน
+        popup_message = "🔔 สรุปผลการอัปโหลด: \n"
+        for _, row in emp_total_df.iterrows():
+            popup_message += f"- พนักงานรหัส {row['EMP ID']} นับได้รวม {row['SN']} ตัว\n"
+
+        st.toast(popup_message, icon="📊")
+
+        # 2. ทำกล่องแจ้งเตือนสีเขียวเด่นๆ (Success Box) แยกพนักงานให้เห็นชัดเจนด้านบนสุด
+        st.success(f"🎉 อัปโหลดสำเร็จ {len(uploaded_files)} ไฟล์! สรุปยอดรวมแยกพนักงาน:")
+
+        # แสดงเป็นกล่องข้อความแยกบรรทัดให้อ่านง่าย
+        for _, row in emp_total_df.iterrows():
+            st.markdown(
+                f"👤 รหัสพนักงาน: **{row['EMP ID']}** ➡️ นับโปรดัคได้รวมทั้งหมด **{row['SN']:,}** ตัว"
+            )
+
+        # --------------------------------------------------
+        # ตารางผลลัพธ์แบบละเอียดด้านล่าง
+        # --------------------------------------------------
+        st.markdown("---")
+        st.subheader("📊 ตารางแสดงผลแยกตามสถานี/โปรดัค")
+        st.dataframe(summary_df, use_container_width=True, hide_index=True)
 
         # ปุ่มกดบันทึกข้อมูลเข้าประวัติรวมสะสม
         if st.button("📥 บันทึกข้อมูลชุดนี้ลงประวัติยอดรวมสะสม"):
             current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             files_string = ", ".join(file_names_list)
 
-            # บันทึกข้อมูลลงในประวัติย้อนหลัง
             for _, row in summary_df.iterrows():
                 st.session_state.history_log.append(
                     {
@@ -101,7 +123,7 @@ if uploaded_files:
             st.rerun()
     else:
         st.error(
-            "❌ ไฟล์ที่อัปโหลดเข้ามาไม่มีคอลัมน์ 'EMP ID', 'STATION' หรือ 'SN' เลย กรุณาตรวจสอบหัวตาราง"
+            "❌ ไฟล์ที่อัปโหลดเข้ามาไม่มีโครงสร้างคอลัมน์ที่ต้องการ กรุณาตรวจสอบหัวตาราง"
         )
 
 # --------------------------------------------------
@@ -112,8 +134,6 @@ st.subheader("📜 คลังประวัติยอดรวมสะส�
 
 if st.session_state.history_log:
     history_df = pd.DataFrame(st.session_state.history_log)
-
-    # แสดง KPI ยอดสะสมรวมตั้งแต่เปิดเว็บมา
     total_accumulated_count = history_df["จำนวนที่นับได้ (ตัว)"].sum()
 
     col1, col2 = st.columns(2)
@@ -125,7 +145,6 @@ if st.session_state.history_log:
     st.write("**ตารางประวัติการบันทึกข้อมูลสะสมย้อนหลัง:**")
     st.dataframe(history_df, use_container_width=True, hide_index=True)
 
-    # ปุ่มล้างประวัติ
     if st.button("🗑️ ล้างประวัติยอดรวมทั้งหมด"):
         st.session_state.history_log = []
         st.rerun()
