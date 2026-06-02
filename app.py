@@ -30,7 +30,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<p class="main-title">📦 ระบบตรวจสอบและส่งออกประวัติสต็อก (เฉพาะงานจริง)</p>', unsafe_allow_html=True)
-st.markdown('<p class="sub-title">ระบบนับยอดชิ้นงานผลิตจริงตามรหัสสินค้า (SN): Automatic Count System </p>', unsafe_allow_html=True)
+st.markdown('<p class="sub-title">ระบบนับยอดชิ้นงานผลิตจริงตามรหัสสินค้า (SN): ไม่รวม MASTER, ตัดตัวซ้ำ, แก้รหัสพิมพ์สลับ ตัว O ➡️ เลข 0 และส่งออกไฟล์ Excel ได้</p>', unsafe_allow_html=True)
 
 # --------------------------------------------------
 # ระบบฐานข้อมูลจำลอง (ประวัติยอดรวมสะสม)
@@ -140,10 +140,9 @@ if uploaded_files:
                 
                 st.markdown("---")
                 
-                # ✨ [ฟังก์ชันใหม่] ระบบเลือกช่วงวันที่ปฏิบัติงาน (Date Range)
+                # ระบบเลือกช่วงวันที่ปฏิบัติงาน (Date Range)
                 st.write("**📅 ป้อนช่วงข้อมูลวันที่สำหรับรายงาน Excel**")
                 
-                # ผู้ใช้สามารถคลิกและลากเลือกช่วงวันที่ได้ เช่น วันที่ 25 พ.ค. ถึง 1 มิ.ย.
                 date_range = st.date_input(
                     "เลือกช่วงวันที่ปฏิบัติงาน",
                     value=(datetime.date.today() - datetime.timedelta(days=7), datetime.date.today())
@@ -160,22 +159,22 @@ if uploaded_files:
                     date_string = datetime.date.today().strftime('%Y-%m-%d')
                 
                 # --------------------------------------------------
-                # 📥 ระบบส่งออกเป็นไฟล์ Excel (.xlsx) แบบมีช่วงวันที่ + มี Total
+                # 📥 ระบบส่งออกเป็นไฟล์ Excel (.xlsx) [เวอร์ชันภาษาอังกฤษทั้งหมด]
                 # --------------------------------------------------
                 st.write("**📥 ดาวน์โหลดรายงานสรุป**")
                 
-                # โครงสร้างตารางตามที่คุณต้องการ: วันที่ | รหัสพนักงาน | จำนวน
+                # โครงสร้างตารางเวอร์ชันภาษาอังกฤษตามรูปแบบสากล: Date | Emp ID | Actual Qty (pcs)
                 excel_df = pd.DataFrame({
-                    "วันที่": date_string,
-                    "รหัสพนักงาน": emp_total_df["รหัสพนักงาน (EMP ID)"],
-                    "จำนวนรวมแท้จริง (ตัว)": emp_total_df["จำนวนรวมแท้จริง (ตัว)"]
+                    "Date": date_string,
+                    "Emp ID": emp_total_df["รหัสพนักงาน (EMP ID)"],
+                    "Actual Qty (pcs)": emp_total_df["จำนวนรวมแท้จริง (ตัว)"]
                 })
                 
-                # เพิ่มบรรทัดสรุปรวม (Total) ท้ายตารางใน Excel
+                # เพิ่มบรรทัดสรุปรวมท้ายตาราง (Total) ในภาษาอังกฤษ
                 total_row = pd.DataFrame([{
-                    "วันที่": "Total",
-                    "รหัสพนักงาน": "",
-                    "จำนวนรวมแท้จริง (ตัว)": current_total_sum
+                    "Date": "Total",
+                    "Emp ID": "",
+                    "Actual Qty (pcs)": current_total_sum
                 }])
                 excel_final_df = pd.concat([excel_df, total_row], ignore_index=True)
 
@@ -185,11 +184,11 @@ if uploaded_files:
                     excel_final_df.to_excel(writer, index=False, sheet_name="Summary")
                 buffer.seek(0)
 
-                # สร้างปุ่มสำหรับกดดาวน์โหลดไฟล์ Excel ออกไปนอกระบบ
+                # สร้างปุ่มสำหรับกดดาวน์โหลดไฟล์ Excel ออกไปนอกระบบ (ชื่อไฟล์เป็นภาษาอังกฤษ)
                 st.download_button(
                     label="🟢 ดาวน์โหลดรายงานเป็นไฟล์ Excel (ระบุช่วงวันที่ + Total)",
                     data=buffer,
-                    file_name=f"สรุปยอดปรับรุ่นจริง_({date_string.replace(' ', '')}).xlsx",
+                    file_name=f"Production_Summary_({date_string.replace(' ', '')}).xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width=True
                 )
