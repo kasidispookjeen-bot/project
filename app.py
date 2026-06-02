@@ -1,15 +1,16 @@
 import datetime
 import pandas as pd
+import plotly.express as px
 import streamlit as st
 
 # ตั้งค่าหน้าเว็บ
 st.set_page_config(
-    page_title="ระบบอ่านไฟล์นับสต็อกอัจฉริยะ", page_icon="📦", layout="centered"
+    page_title="ระบบอ่านไฟล์นับสต็อกรายสัปดาห์", page_icon="📦", layout="centered"
 )
 
-st.title("📦 ระบบตรวจสอบและบันทึกประวัติสต็อก (อัปโหลดหลายไฟล์)")
+st.title("📦 ระบบตรวจสอบและบันทึกประวัติสต็อกรายสัปดาห์")
 st.write(
-    "อัปโหลดไฟล์ Excel หลายๆ ไฟล์พร้อมกัน ระบบจะรวมยอดและแสดงสรุปผลแยกพนักงานให้ทันที"
+    "อัปโหลดไฟล์ Excel หลายๆ ไฟล์พร้อมกัน ระบบจะรวมยอดแยกตามรายสัปดาห์ให้ทันที"
 )
 
 # --------------------------------------------------
@@ -25,7 +26,6 @@ uploaded_files = st.file_uploader(
     accept_multiple_files=True,
 )
 
-# ตรวจสอบเมื่อมีการอัปโหลดไฟล์เข้ามา
 if uploaded_files:
     all_file_data = []
     file_names_list = []
@@ -38,12 +38,14 @@ if uploaded_files:
             for sheet_name in xls.sheet_names:
                 df = pd.read_excel(uploaded_file, sheet_name=sheet_name)
 
-                # ตรวจสอบคอลัมน์สำคัญ
+                # ตรวจสอบคอลัมน์สำคัญ (รอบนี้ดึงคอลัมน์ DATE มาคำนวณสัปดาห์ด้วย)
                 if (
-                    "EMP ID" in df.columns
+                    "DATE" in df.columns
+                    and "EMP ID" in df.columns
                     and "STATION" in df.columns
                     and "SN" in df.columns
                 ):
+                    # คลีนข้อมูลเบื้องต้น
                     df_clean = df[df["EMP ID"].notna()]
                     df_clean = df_clean[df_clean["EMP ID"] != "EMP ID"]
 
@@ -54,95 +56,115 @@ if uploaded_files:
                         df_clean["STATION"].astype(str).str.strip()
                     )
 
-                    all_file_data.append(df_clean[["EMP ID", "STATION", "SN"]])
+                    # จัดการเรื่องวันที่ (แปลงเป็น datetime ของ pandas)
+                    # ffill() ช่วยเติมวันที่ในแถวที่ปล่อยว่างไว้ใน Excel
+                    df_clean["DATE"] = df_clean["DATE"].ffill()
+                    df_clean["DATE_PARSED"] = pd.to_datetime(
+                        df_clean["DATE"], errors="coerce", dayfirst=True
+                    )
+
+                    # สร้างชื่อสัปดาห์ เช่น "ปี 2026 - สัปดาห์ที่ 21"
+                    df_clean["สัปดาห์"] = df_clean["DATE_PARSED"].dt.strftime(
+                        "ปี %Y - สัปดาห์ที่ %U"
+                    )
+                    # หากแถวไหนไม่มีวันที่ ให้ระบุว่า ไม่ระบุวันที่
+                    df_clean["สัปดาห์"] = df_clean["สัปดาห์"].fillna(
+                        "ไม่ระบุวันที่ในไฟล์"
+                    )
+
+                    all_file_data.append(
+                        df_clean[["สัปดาห์", "EMP ID", "STATION", "SN"]]
+                    )
         except Exception as e:
             st.error(f"❌ เกิดข้อผิดพลาดในการอ่านไฟล์ {uploaded_file.name}: {e}")
 
     if all_file_data:
-        combined_df = pd.concat(all_data := all_file_data, ignore_index=True)
+        combined_df = pd.concat(all_file_data, ignore_index=True)
 
-        # คำนวณสรุปรวมแยกตามพนักงานและสถานี เพื่อนำไปแสดงในตาราง
-        summary_df = (
-            combined_df.groupby(["EMP ID", "STATION"])["SN"]
+        # คำนวณสรุปยอดรวมแยกพนักงานตามสัปดาห์
+        weekly_emp_df = (
+            combined_df.groupby(["สัปดาห์", "EMP ID"])["SN"]
             .count()
             .reset_index()
         )
-        summary_df.columns = [
+        weekly_emp_df.columns = [
+            "สัปดาห์ที่ทำงาน",
             "รหัสพนักงาน (EMP ID)",
-            "สินค้า/สถานี (STATION)",
-            "จำนวนที่นับได้ (ตัว)",
+            "จำนวนรวมที่นับได้ (ตัว)",
         ]
 
-        # คำนวณยอดรวมสุทธิแยกรายบุคคล (พนักงาน 1 คน นับได้รวมกี่ตัวจากทุกสินค้า)
-        emp_total_df = (
-            combined_df.groupby("EMP ID")["SN"].count().reset_index()
-        )
-
         # --------------------------------------------------
-        # ✨ ส่วนป๊อปอัปแจ้งเตือนและแสดงยอดแยกรายบุคคล
+        # ✨ แสดงผลป๊อปอัปแจ้งเตือนกล่องเขียวรายบุคคล
         # --------------------------------------------------
-        # 1. ทำป๊อปอัปข้อความเด้งเตือน (Toast Notification) สรุปยอดพนักงานแต่ละคน
-        popup_message = "🔔 สรุปผลการอัปโหลด: \n"
-        for _, row in emp_total_df.iterrows():
-            popup_message += f"- พนักงานรหัส {row['EMP ID']} นับได้รวม {row['SN']} ตัว\n"
+        st.success(f"🎉 อัปโหลดสำเร็จ {len(uploaded_files)} ไฟล์!")
 
-        st.toast(popup_message, icon="📊")
-
-        # 2. ทำกล่องแจ้งเตือนสีเขียวเด่นๆ (Success Box) แยกพนักงานให้เห็นชัดเจนด้านบนสุด
-        st.success(f"🎉 อัปโหลดสำเร็จ {len(uploaded_files)} ไฟล์! สรุปยอดรวมแยกพนักงาน:")
-
-        # แสดงเป็นกล่องข้อความแยกบรรทัดให้อ่านง่าย
-        for _, row in emp_total_df.iterrows():
+        # 1. แสดงการ์ดสรุปยอดแยกตามสัปดาห์และรายบุคคล
+        st.subheader("🗓️ สรุปยอดรวมแยกตามสัปดาห์")
+        for _, row in weekly_emp_df.iterrows():
             st.markdown(
-                f"👤 รหัสพนักงาน: **{row['EMP ID']}** ➡️ นับโปรดัคได้รวมทั้งหมด **{row['SN']:,}** ตัว"
+                f"📅 **{row['สัปดาห์ที่ทำงาน']}** ➡️ พนักงานรหัส: **{row['รหัสพนักงาน (EMP ID)']}** นับได้รวมทั้งหมด **{row['จำนวนรวมที่นับได้ (ตัว)']}** ตัว"
             )
 
-        # --------------------------------------------------
-        # ตารางผลลัพธ์แบบละเอียดด้านล่าง
-        # --------------------------------------------------
-        st.markdown("---")
-        st.subheader("📊 ตารางแสดงผลแยกตามสถานี/โปรดัค")
-        st.dataframe(summary_df, use_container_width=True, hide_index=True)
+        # 2. เพิ่มกราฟแท่งแสดงให้เห็นภาพชัดเจน (Visual Chart)
+        fig = px.bar(
+            weekly_emp_df,
+            x="สัปดาห์ที่ทำงาน",
+            y="จำนวนรวมที่นับได้ (ตัว)",
+            color="รหัสพนักงาน (EMP ID)",
+            barmode="group",
+            title="กราฟเปรียบเทียบยอดนับสต็อกของพนักงานในแต่ละสัปดาห์",
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
-        # ปุ่มกดบันทึกข้อมูลเข้าประวัติรวมสะสม
+        # 3. แสดงตารางดีเทลแยกตามสถานีสินค้าแบบละเอียด
+        with st.expander("🔍 คลิกเพื่อดูตารางรายละเอียดแยกตามประเภทสินค้า"):
+            detail_df = (
+                combined_df.groupby(["สัปดาห์", "EMP ID", "STATION"])["SN"]
+                .count()
+                .reset_index()
+            )
+            detail_df.columns = [
+                "สัปดาห์",
+                "รหัสพนักงาน",
+                "สินค้า/สถานี",
+                "จำนวน (ตัว)",
+            ]
+            st.dataframe(detail_df, use_container_width=True, hide_index=True)
+
+        # ปุ่มกดบันทึกข้อมูลเข้าคลังประวัติสะสม
         if st.button("📥 บันทึกข้อมูลชุดนี้ลงประวัติยอดรวมสะสม"):
             current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             files_string = ", ".join(file_names_list)
 
-            for _, row in summary_df.iterrows():
+            # นำข้อมูลกลุ่มสัปดาห์ไปบันทึกเก็บไว้
+            for _, row in weekly_emp_df.iterrows():
                 st.session_state.history_log.append(
                     {
-                        "เวลาที่บันทึก": current_time,
-                        "จากไฟล์ทั้งหมด": files_string,
+                        "เวลาที่บันทึกระบบ": current_time,
+                        "จากไฟล์": files_string,
+                        "สัปดาห์": row["สัปดาห์ที่ทำงาน"],
                         "รหัสพนักงาน (EMP ID)": row["รหัสพนักงาน (EMP ID)"],
-                        "สินค้า/สถานี (STATION)": row["สินค้า/สถานี (STATION)"],
-                        "จำนวนที่นับได้ (ตัว)": row["จำนวนที่นับได้ (ตัว)"],
+                        "จำนวนรวมสะสม (ตัว)": row["จำนวนรวมที่นับได้ (ตัว)"],
                     }
                 )
-            st.toast("บันทึกข้อมูลเข้าประวัติรวมเรียบร้อยแล้ว!")
+            st.toast("บันทึกข้อมูลเข้าคลังประวัติเรียบร้อยแล้ว!")
             st.rerun()
     else:
         st.error(
-            "❌ ไฟล์ที่อัปโหลดเข้ามาไม่มีโครงสร้างคอลัมน์ที่ต้องการ กรุณาตรวจสอบหัวตาราง"
+            "❌ ไฟล์ที่อัปโหลดไม่มีโครงสร้างคอลัมน์หลัก (DATE, EMP ID, STATION, SN) กรุณาตรวจสอบหัวตาราง"
         )
 
 # --------------------------------------------------
-# ส่วนที่ 2: หน้าต่างประวัติยอดรวมสะสม (Historical Dashboard)
+# ส่วนที่ 2: หน้าต่างประวัติยอดรวมสะสมย้อนหลัง (Historical Data)
 # --------------------------------------------------
 st.markdown("---")
-st.subheader("📜 คลังประวัติยอดรวมสะสม (Historical Data)")
+st.subheader("📜 คลังประวัติยอดรวมสะสมย้อนหลัง")
 
 if st.session_state.history_log:
     history_df = pd.DataFrame(st.session_state.history_log)
-    total_accumulated_count = history_df["จำนวนที่นับได้ (ตัว)"].sum()
+    total_accumulated = history_df["จำนวนรวมสะสม (ตัว)"].sum()
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("บันทึกข้อมูลไปแล้วทั้งหมด", f"{len(history_df)} รายการกลุ่ม")
-    with col2:
-        st.metric("ยอดนับสินค้าสะสมรวมทุกไฟล์", f"{total_accumulated_count:,} ตัว")
-
-    st.write("**ตารางประวัติการบันทึกข้อมูลสะสมย้อนหลัง:**")
+    st.metric("ยอดนับสินค้าสะสมรวมในระบบทั้งหมด", f"{total_accumulated:,} ตัว")
     st.dataframe(history_df, use_container_width=True, hide_index=True)
 
     if st.button("🗑️ ล้างประวัติยอดรวมทั้งหมด"):
