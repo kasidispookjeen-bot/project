@@ -5,12 +5,12 @@ import streamlit as st
 
 # ตั้งค่าหน้าเว็บ
 st.set_page_config(
-    page_title="ระบบสต็อกอัจฉริยะ (ไม่นับ MASTER)", page_icon="📦", layout="centered"
+    page_title="ระบบสต็อกอัจฉริยะ", page_icon="📦", layout="centered"
 )
 
-st.title("📦 ระบบตรวจสอบสต็อกรายสัปดาห์ (ไม่รวมยอด MASTER)")
+st.title("📦 ระบบตรวจสอบและบันทึกประวัติสต็อก")
 st.write(
-    "อัปโหลดไฟล์ Excel หลายๆ ไฟล์พร้อมกัน ระบบจะตัดสินค้าซ้ำ และ **ไม่นับสถานี MASTER** ให้โดยอัตโนมัติ"
+    "อัปโหลดไฟล์ Excel หลายๆ ไฟล์พร้อมกัน ระบบจะตัดสินค้าซ้ำ และ **ไม่รวมสถานี MASTER**"
 )
 
 # --------------------------------------------------
@@ -40,8 +40,7 @@ if uploaded_files:
 
                 # ตรวจสอบโครงสร้างคอลัมน์สำคัญ
                 if (
-                    "DATE" in df.columns
-                    and "EMP ID" in df.columns
+                    "EMP ID" in df.columns
                     and "STATION" in df.columns
                     and "SN" in df.columns
                 ):
@@ -58,28 +57,12 @@ if uploaded_files:
                     )
                     df_clean["SN"] = df_clean["SN"].astype(str).str.strip()
 
-                    # 🚨 [จุดสำคัญที่เพิ่มเข้ามา] ทำการคัดออก! ไม่เอาสถานีที่เป็น 'MASTER' หรือ 'master'
+                    # 🚨 ตัดออก! ไม่เอาสถานีที่เป็น 'MASTER' หรือ 'master'
                     df_clean = df_clean[
                         df_clean["STATION"].str.upper() != "MASTER"
                     ]
 
-                    # 3. จัดการเติมวันที่ในกรณีที่ Excel ปล่อยเว้นว่างไว้ในแถวถัดๆ มา
-                    df_clean["DATE"] = df_clean["DATE"].ffill()
-                    df_clean["DATE_PARSED"] = pd.to_datetime(
-                        df_clean["DATE"], errors="coerce", dayfirst=True
-                    )
-                    
-                    # 4. แปลงวันที่เป็นเลขสัปดาห์ของปี
-                    df_clean["สัปดาห์"] = df_clean["DATE_PARSED"].dt.strftime(
-                        "ปี %Y - สัปดาห์ที่ %U"
-                    )
-                    df_clean["สัปดาห์"] = df_clean["สัปดาห์"].fillna(
-                        "ไม่ระบุวันที่ในไฟล์"
-                    )
-
-                    all_file_data.append(
-                        df_clean[["สัปดาห์", "EMP ID", "STATION", "SN"]]
-                    )
+                    all_file_data.append(df_clean[["EMP ID", "STATION", "SN"]])
         except Exception as e:
             st.error(f"❌ เกิดข้อผิดพลาดในการอ่านไฟล์ {uploaded_file.name}: {e}")
 
@@ -91,52 +74,50 @@ if uploaded_files:
         combined_df = raw_combined_df.drop_duplicates(subset=["SN"], keep="first")
 
         if not combined_df.empty:
-            # คำนวณสรุปยอดรวมแยกพนักงานตามสัปดาห์ (ไม่มี MASTER และไม่มีของซ้ำ)
-            weekly_emp_df = (
-                combined_df.groupby(["สัปดาห์", "EMP ID"])["SN"]
-                .count()
-                .reset_index()
+            # คำนวณสรุปยอดรวมสุทธิแยกรายบุคคล (ไม่มี MASTER และไม่มีของซ้ำ)
+            emp_total_df = (
+                combined_df.groupby("EMP ID")["SN"].count().reset_index()
             )
-            weekly_emp_df.columns = [
-                "สัปดาห์ที่ทำงาน",
-                "รหัสพนักงาน (EMP ID)",
-                "จำนวนรวมที่นับได้ (ตัว)",
-            ]
+            emp_total_df.columns = ["รหัสพนักงาน (EMP ID)", "จำนวนรวมแท้จริง (ตัว)"]
 
             # --------------------------------------------------
-            # ✨ ส่วนการแสดงผลสรุปบนหน้าเว็บ
+            # ✨ ส่วนการแสดงผลป๊อปอัปและข้อความสรุปรายคน
             # --------------------------------------------------
+            # 1. ทำป๊อปอัปข้อความเด้งเตือน (Toast Notification) สรุปยอดพนักงานแต่ละคน
+            popup_message = "🔔 สรุปผลยอดนับงานจริง: \n"
+            for _, row in emp_total_df.iterrows():
+                popup_message += f"- พนักงาน {row['รหัสพนักงาน (EMP ID)']} ได้ {row['จำนวนรวมแท้จริง (ตัว)']} ตัว\n"
+            st.toast(popup_message, icon="📊")
+
+            # 2. กล่องข้อความสีเขียวสรุปยอดเด่นๆ ด้านบนสุด
             st.success(
-                f"🎉 รวมข้อมูลสำเร็จ! (คัดกรองตัวซ้ำและคัดแยกสถานี MASTER ออกให้เรียบร้อยแล้ว)"
+                f"🎉 รวมข้อมูลสำเร็จทั้งหมด {len(uploaded_files)} ไฟล์! (ตัดสินค้าซ้ำและ MASTER ออกแล้ว)"
             )
 
-            # แสดงข้อความสรุปยอดที่แท้จริงแยกรายบุคคล
-            st.subheader("🗓️ ยอดสรุปการทำงานรายสัปดาห์ (เฉพาะตัวสินค้าจริง)")
-            for _, row in weekly_emp_df.iterrows():
+            # ลิสต์สรุปพนักงานแยกบรรทัดให้อ่านง่าย
+            for _, row in emp_total_df.iterrows():
                 st.markdown(
-                    f"📅 **{row['สัปดาห์ที่ทำงาน']}** ➡️ พนักงานรหัส: **{row['รหัสพนักงาน (EMP ID)']}** นับสินค้าจริงได้รวม **{row['จำนวนรวมที่นับได้ (ตัว)']}** ตัว"
+                    f"👤 รหัสพนักงาน: **{row['รหัสพนักงาน (EMP ID)']}** ➡️ ยอดนับสินค้าจริงรวมทั้งหมด **{row['จำนวนรวมแท้จริง (ตัว)']:,}** ตัว"
                 )
 
-            # แสดงกราฟแท่งวิเคราะห์ยอด
+            # 3. แสดงกราฟแท่งเปรียบเทียบยอดรวมรายคนในรอบนี้
             fig = px.bar(
-                weekly_emp_df,
-                x="สัปดาห์ที่ทำงาน",
-                y="จำนวนรวมที่นับได้ (ตัว)",
+                emp_total_df,
+                x="รหัสพนักงาน (EMP ID)",
+                y="จำนวนรวมแท้จริง (ตัว)",
                 color="รหัสพนักงาน (EMP ID)",
-                barmode="group",
-                title="กราฟแสดงยอดนับสต็อกจริงในแต่ละสัปดาห์ (ไม่นับ MASTER)",
+                title="กราฟเปรียบเทียบยอดรวมสินค้าจริงของพนักงาน (รอบปัจจุบัน)",
             )
             st.plotly_chart(fig, use_container_width=True)
 
-            # ตารางรายละเอียดแยกตามประเภทตัวสินค้าจริง
-            with st.expander("🔍 คลิกเพื่อดูตารางรายชื่อสินค้า (SN) ทั้งหมดแบบละเอียด"):
+            # ตารางรายละเอียดสินค้าแยกตามสถานีจริงแบบไม่ซ้ำ
+            with st.expander("🔍 คลิกเพื่อดูตารางรายละเอียดแยกตามรหัสพนักงานและสถานี"):
                 detail_df = (
-                    combined_df.groupby(["สัปดาห์", "EMP ID", "STATION"])["SN"]
+                    combined_df.groupby(["EMP ID", "STATION"])["SN"]
                     .count()
                     .reset_index()
                 )
                 detail_df.columns = [
-                    "สัปดาห์",
                     "รหัสพนักงาน",
                     "สินค้า/สถานี",
                     "จำนวนจริง (ตัว)",
@@ -148,20 +129,19 @@ if uploaded_files:
                 current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 files_string = ", ".join(file_names_list)
 
-                for _, row in weekly_emp_df.iterrows():
+                for _, row in emp_total_df.iterrows():
                     st.session_state.history_log.append(
                         {
                             "เวลาที่บันทึกระบบ": current_time,
-                            "จากไฟล์": files_string,
-                            "สัปดาห์": row["สัปดาห์ที่ทำงาน"],
+                            "จากไฟล์ทั้งหมด": files_string,
                             "รหัสพนักงาน (EMP ID)": row["รหัสพนักงาน (EMP ID)"],
-                            "จำนวนรวมสะสม (ตัว)": row["จำนวนรวมที่นับได้ (ตัว)"],
+                            "จำนวนรวมสะสม (ตัว)": row["จำนวนรวมแท้จริง (ตัว)"],
                         }
                     )
                 st.toast("บันทึกข้อมูลเข้าคลังประวัติเรียบร้อยแล้ว!")
                 st.rerun()
         else:
-            st.warning("⚠️ หลังจากตัดสถานี MASTER ออกแล้ว ไม่พบข้อมูลตัวงานอื่นในไฟล์เลย")
+            st.warning("⚠️ ไม่พบข้อมูลสินค้าอื่นนอกเหนือจากสถานี MASTER เลย")
     else:
         st.error(
             "❌ ไม่พบโครงสร้างข้อมูลที่ถูกต้อง กรุณาตรวจสอบหัวตารางไฟล์ Excel"
@@ -171,7 +151,7 @@ if uploaded_files:
 # ส่วนที่ 2: หน้าต่างประวัติยอดรวมสะสมย้อนหลัง
 # --------------------------------------------------
 st.markdown("---")
-st.subheader("📜 คลังประวัติยอดรวมสะสมย้อนหลัง (ตัวงานจริง)")
+st.subheader("📜 คลังประวัติยอดรวมสะสมย้อนหลัง (เฉพาะตัวงานจริง)")
 
 if st.session_state.history_log:
     history_df = pd.DataFrame(st.session_state.history_log)
