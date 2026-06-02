@@ -5,12 +5,12 @@ import streamlit as st
 
 # ตั้งค่าหน้าเว็บ
 st.set_page_config(
-    page_title="ระบบสต็อกอัจฉริยะ (แก้รหัสผิดอัตโนมัติ)", page_icon="📦", layout="centered"
+    page_title="ระบบสต็อกอัจฉริยะ (Multi-Mode)", page_icon="📦", layout="centered"
 )
 
 st.title("📦 ระบบตรวจสอบและบันทึกประวัติสต็อก")
 st.write(
-    "ระบบเวอร์ชันแก้ปัญหาทักษะการพิมพ์: เปลี่ยนตัวอักษร `O` ในรหัสพนักงานให้เป็นเลข `0` อัตโนมัติ, ไม่รวม MASTER, และตัดตัวซ้ำ"
+    "ระบบเวอร์ชันแก้ปัญหาทักษะการพิมพ์: เปลี่ยนตัวอักษร `O` ในรหัสพนักงานให้เป็นเลข `0` อัตโนมัติ, ตัดตัวซ้ำ, และเลือกสลับโหมดดู MASTER ได้"
 )
 
 # --------------------------------------------------
@@ -58,16 +58,10 @@ if uploaded_files:
                     df_clean["SN"] = df_clean["SN"].astype(str).str.strip()
 
                     # 🚨 [จุดแก้ไขสำคัญ] แก้ปัญหาพิมพ์ รหัสพนักงานสลับ เลข 0 กับ ตัว O
-                    # บรรทัดนี้จะเปลี่ยนอักษร 'O' หรือ 'o' ให้กลายเป็นเลข '0' ทั้งหมดในรหัสพนักงาน
                     df_clean["EMP ID"] = (
                         df_clean["EMP ID"]
                         .str.replace("O", "0", case=False)
                     )
-
-                    # 🚨 ตัดออก! ไม่เอาสถานีที่เป็น 'MASTER' หรือ 'master'
-                    df_clean = df_clean[
-                        df_clean["STATION"].str.upper() != "MASTER"
-                    ]
 
                     all_file_data.append(df_clean[["EMP ID", "STATION", "SN"]])
         except Exception as e:
@@ -80,45 +74,69 @@ if uploaded_files:
         # 🎯 ตัดรายการที่ "หมายเลขสินค้า (SN)" ซ้ำกันออก ให้เหลือชิ้นเดียว
         combined_df = raw_combined_df.drop_duplicates(subset=["SN"], keep="first")
 
-        if not combined_df.empty:
-            # คำนวณสรุปยอดรวมสุทธิแยกรายบุคคล (รวมรหัสที่พิมพ์ผิดเข้าด้วยกันแล้ว)
+        # --------------------------------------------------
+        # ✨ เพิ่มปุ่มตัวเลือก 2 โหมด (รวม / ไม่รวม MASTER)
+        # --------------------------------------------------
+        st.markdown("---")
+        st.subheader("⚙️ เลือกโหมดการแสดงผลข้อมูล")
+        view_mode = st.radio(
+            "คุณต้องการดูข้อมูลในรูปแบบใด?",
+            (
+                "🟢 เฉพาะสินค้าจริง (ไม่นับ MASTER)",
+                "🔵 รวมยอดทั้งหมด (นับรวมสถานี MASTER)",
+            ),
+            horizontal=True,
+        )
+
+        # กรองแยกข้อมูลตามโหมดที่เลือกกด
+        if "เฉพาะสินค้าจริง" in view_mode:
+            display_df = combined_df[combined_df["STATION"].str.upper() != "MASTER"]
+            mode_title = "เฉพาะสินค้าจริง (ไม่รวม MASTER)"
+            mode_icon = "🟢"
+        else:
+            display_df = combined_df
+            mode_title = "รวมยอดทั้งหมด (รวม MASTER)"
+            mode_icon = "🔵"
+
+        if not display_df.empty:
+            # คำนวณสรุปยอดรวมสุทธิแยกรายบุคคลตามโหมดที่เลือก
             emp_total_df = (
-                combined_df.groupby("EMP ID")["SN"].count().reset_index()
+                display_df.groupby("EMP ID")["SN"].count().reset_index()
             )
             emp_total_df.columns = ["รหัสพนักงาน (EMP ID)", "จำนวนรวมแท้จริง (ตัว)"]
 
             # --------------------------------------------------
             # ✨ ส่วนการแสดงผลป๊อปอัปและข้อความสรุปรายคน
             # --------------------------------------------------
-            popup_message = "🔔 สรุปผลยอดนับงานจริง (แก้ไขรหัสพนักงานแล้ว): \n"
+            popup_message = f"🔔 สรุปผลยอดนับ ({mode_title}): \n"
             for _, row in emp_total_df.iterrows():
                 popup_message += f"- พนักงาน {row['รหัสพนักงาน (EMP ID)']} ได้ {row['จำนวนรวมแท้จริง (ตัว)']} ตัว\n"
             st.toast(popup_message, icon="📊")
 
             st.success(
-                f"🎉 รวมข้อมูลสำเร็จ! (รวมยอดพนักงานที่พิมพ์รหัสสลับ ตัว O / เลข 0 เข้าด้วยกันเรียบร้อยแล้ว)"
+                f"🎉 รวมข้อมูลสำเร็จ! ขณะนี้กำลังแสดงผลในโหมด: **{mode_title}**"
             )
 
             # ลิสต์สรุปพนักงานแยกบรรทัดให้อ่านง่าย
             for _, row in emp_total_df.iterrows():
                 st.markdown(
-                    f"👤 รหัสพนักงาน: **{row['รหัสพนักงาน (EMP ID)']}** ➡️ ยอดนับสินค้าจริงรวมทั้งหมด **{row['จำนวนรวมแท้จริง (ตัว)']:,}** ตัว"
+                    f"👤 รหัสพนักงาน: **{row['รหัสพนักงาน (EMP ID)']}** ➡️ ยอดรวมทั้งหมดในโหมดนี้ **{row['จำนวนรวมแท้จริง (ตัว)']:,}** ตัว"
                 )
 
-            # 3. แสดงกราฟแท่งเปรียบเทียบยอดรวมรายคนในรอบนี้
+            # 3. แสดงกราฟแท่งเปรียบเทียบยอดรวมรายคนในรอบนี้ (ปรับเปลี่ยนตามโหมดอัตโนมัติ)
             fig = px.bar(
                 emp_total_df,
                 x="รหัสพนักงาน (EMP ID)",
                 y="จำนวนรวมแท้จริง (ตัว)",
                 color="รหัสพนักงาน (EMP ID)",
-                title="กราฟเปรียบเทียบยอดรวมสินค้าจริงของพนักงาน (รอบปัจจุบัน - แก้รหัสผิดแล้ว)",
+                title=f"กราฟเปรียบเทียบยอดรวมสินค้าของพนักงาน ({mode_title})",
             )
             st.plotly_chart(fig, use_container_width=True)
 
             # ตารางรายละเอียดสินค้าแยกตามสถานีจริงแบบไม่ซ้ำ
             with st.expander("🔍 คลิกเพื่อดูตารางรายละเอียดแยกตามรหัสพนักงานและสถานี"):
                 detail_df = (
-                    combined_df.groupby(["EMP ID", "STATION"])["SN"]
+                    display_df.groupby(["EMP ID", "STATION"])["SN"]
                     .count()
                     .reset_index()
                 )
@@ -139,6 +157,7 @@ if uploaded_files:
                         {
                             "เวลาที่บันทึกระบบ": current_time,
                             "จากไฟล์ทั้งหมด": files_string,
+                            "โหมดที่เลือกบันทึก": mode_title,
                             "รหัสพนักงาน (EMP ID)": row["รหัสพนักงาน (EMP ID)"],
                             "จำนวนรวมสะสม (ตัว)": row["จำนวนรวมแท้จริง (ตัว)"],
                         }
@@ -146,7 +165,7 @@ if uploaded_files:
                 st.toast("บันทึกข้อมูลเข้าคลังประวัติเรียบร้อยแล้ว!")
                 st.rerun()
         else:
-            st.warning("⚠️ ไม่พบข้อมูลสินค้าอื่นนอกเหนือจากสถานี MASTER เลย")
+            st.warning(f"⚠️ ไม่พบข้อมูลที่จะแสดงในโหมด {mode_title}")
     else:
         st.error(
             "❌ ไม่พบโครงสร้างข้อมูลที่ถูกต้อง กรุณาตรวจสอบหัวตารางไฟล์ Excel"
@@ -156,13 +175,13 @@ if uploaded_files:
 # ส่วนที่ 2: หน้าต่างประวัติยอดรวมสะสมย้อนหลัง
 # --------------------------------------------------
 st.markdown("---")
-st.subheader("📜 คลังประวัติยอดรวมสะสมย้อนหลัง (คัดกรองข้อมูลถูกต้องแล้ว)")
+st.subheader("📜 คลังประวัติยอดรวมสะสมย้อนหลัง (บันทึกตามโหมด)")
 
 if st.session_state.history_log:
     history_df = pd.DataFrame(st.session_state.history_log)
     total_accumulated = history_df["จำนวนรวมสะสม (ตัว)"].sum()
 
-    st.metric("ยอดนับสินค้าสะสมรวมในระบบทั้งหมด (ไม่รวม MASTER)", f"{total_accumulated:,} ตัว")
+    st.metric("ยอดนับสินค้าสะสมรวมในระบบทั้งหมด", f"{total_accumulated:,} ตัว")
     st.dataframe(history_df, use_container_width=True, hide_index=True)
 
     if st.button("🗑️ ล้างประวัติยอดรวมทั้งหมด"):
