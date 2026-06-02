@@ -132,28 +132,50 @@ if uploaded_files:
                         f"👤 รหัสพนักงาน: **{row['รหัสพนักงาน (EMP ID)']}** ➡️ ยอดปรับจริงรวม **{row['จำนวนรวมแท้จริง (ตัว)']:,}** ตัว"
                     )
 
-                # ✨ [ส่วนที่เพิ่มเข้ามาใหม่] แสดงกล่องผลรวม Total รวมของทุกคนในหน้านี้
+                # แสดงกล่องผลรวม Total รวมของทุกคนในหน้านี้
                 st.markdown(
                     f'<div class="total-box"><b>📊 ยอดรวมทั้งหมดประจำรอบนี้ (Total):</b> <span style="color:#10B981; font-size:18px; font-weight:700;">{current_total_sum:,}</span> ตัว</div>', 
                     unsafe_allow_html=True
                 )
                 
+                st.markdown("---")
+                
+                # ✨ [ส่วนที่เพิ่มเข้ามาใหม่] ระบบเลือกวันที่สำหรับปั๊มลงใน Excel
+                st.write("**📅 ป้อนข้อมูลวันที่สำหรับรายงาน Excel**")
+                selected_date = st.date_input("เลือกวันที่ปฏิบัติงาน", datetime.date.today())
+                date_string = selected_date.strftime("%Y-%m-%d") # แปลงเป็นข้อความ เช่น 2026-05-25
+                
                 # --------------------------------------------------
-                # 📥 ระบบส่งออกเป็นไฟล์ Excel (.xlsx)
+                # 📥 ระบบส่งออกเป็นไฟล์ Excel (.xlsx) แบบมีวันที่ + มี Total
                 # --------------------------------------------------
                 st.write("**📥 ดาวน์โหลดรายงานสรุป**")
                 
-                # แปลงข้อมูลในตาราง emp_total_df ให้กลายเป็นไฟล์ Excel ในหน่วยความจำ (Buffer)
+                # โครงสร้างตารางตามที่คุณต้องการ: วันที่ | รหัสพนักงาน | จำนวน
+                excel_df = pd.DataFrame({
+                    "วันที่": date_string,
+                    "รหัสพนักงาน": emp_total_df["รหัสพนักงาน (EMP ID)"],
+                    "จำนวนรวมแท้จริง (ตัว)": emp_total_df["จำนวนรวมแท้จริง (ตัว)"]
+                })
+                
+                # เพิ่มบรรทัดสรุปรวม (Total) ท้ายตารางใน Excel
+                total_row = pd.DataFrame([{
+                    "วันที่": "Total",
+                    "รหัสพนักงาน": "",
+                    "จำนวนรวมแท้จริง (ตัว)": current_total_sum
+                }])
+                excel_final_df = pd.concat([excel_df, total_row], ignore_index=True)
+
+                # แปลงข้อมูลให้กลายเป็นไฟล์ Excel ในหน่วยความจำ (Buffer)
                 buffer = io.BytesIO()
                 with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-                    emp_total_df.to_excel(writer, index=False, sheet_name="Summary")
+                    excel_final_df.to_excel(writer, index=False, sheet_name="Summary")
                 buffer.seek(0)
 
                 # สร้างปุ่มสำหรับกดดาวน์โหลดไฟล์ Excel ออกไปนอกระบบ
                 st.download_button(
-                    label="🟢 ดาวน์โหลดรายงานเป็นไฟล์ Excel",
+                    label="🟢 ดาวน์โหลดรายงานเป็นไฟล์ Excel (ระบุวันที่ + Total)",
                     data=buffer,
-                    file_name=f"สรุปยอดปรับรุ่นจริง_{datetime.date.today()}.xlsx",
+                    file_name=f"สรุปยอดปรับรุ่นจริง_{date_string}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width=True
                 )
@@ -250,4 +272,4 @@ if st.session_state.history_log:
             st.session_state.history_log = []
             st.rerun()
 else:
-    st.info("ℹ️ ยังไม่มีประวัติยอดรวมสะสมในคลัง")
+    st.info("ℹ️ ยังไม่มีประวัติยอดรวมสะสม in คลัง")
